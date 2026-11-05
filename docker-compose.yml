@@ -1,0 +1,78 @@
+# NGULIK BASS STUDIO — Phase 1 stack (CPU-only VPS)
+# Phase 2 will add: redis + worker (Demucs separation job queue).
+name: ngulik-bass-studio
+
+services:
+  db:
+    image: postgres:16.9-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET}
+      COOKIE_SECURE: "true"
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      STORAGE_DIR: /data/storage
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      MAX_DURATION_SEC: ${MAX_DURATION_SEC:-900}
+      RATE_LIMIT_AUTH: ${RATE_LIMIT_AUTH:-10/minute}
+      RATE_LIMIT_UPLOAD: ${RATE_LIMIT_UPLOAD:-20/hour}
+    volumes:
+      - storage:/data/storage
+    networks: [internal]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:8000
+        NEXT_PUBLIC_MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+    restart: unless-stopped
+    depends_on: [backend]
+    networks: [internal]
+
+  caddy:
+    image: caddy:2.10.0-alpine
+    restart: unless-stopped
+    depends_on: [frontend, backend]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+      CADDY_MAX_BODY: ${CADDY_MAX_BODY:-60MB}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [internal]
+
+volumes:
+  pgdata:
+  storage:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:

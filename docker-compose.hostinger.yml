@@ -1,0 +1,90 @@
+# NGULIK BASS STUDIO — Hostinger VPS variant.
+# Shares the EXISTING Traefik (from the n8n template) for ports 80/443 + Let's Encrypt.
+# Does not publish any host port and does not modify n8n or its containers.
+# Values come from .env (written by deploy/hostinger-install.sh).
+name: ngulik-bass-studio
+
+services:
+  db:
+    image: postgres:16.9-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+    mem_limit: 512m
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET}
+      COOKIE_SECURE: "true"
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      STORAGE_DIR: /data/storage
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      MAX_DURATION_SEC: ${MAX_DURATION_SEC:-900}
+      RATE_LIMIT_AUTH: ${RATE_LIMIT_AUTH:-10/minute}
+      RATE_LIMIT_UPLOAD: ${RATE_LIMIT_UPLOAD:-20/hour}
+    volumes:
+      - storage:/data/storage
+    networks: [internal, proxy]
+    mem_limit: 1g
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK}
+      - traefik.http.routers.nbs-api.rule=Host(`${DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.nbs-api.priority=100
+      - traefik.http.routers.nbs-api.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.nbs-api.tls=true
+      - traefik.http.routers.nbs-api.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.http.routers.nbs-api.middlewares=nbs-headers
+      - traefik.http.services.nbs-api.loadbalancer.server.port=8000
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:8000
+        NEXT_PUBLIC_MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+    restart: unless-stopped
+    depends_on: [backend]
+    networks: [internal, proxy]
+    mem_limit: 512m
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK}
+      - traefik.http.routers.nbs-web.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.nbs-web.priority=10
+      - traefik.http.routers.nbs-web.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.nbs-web.tls=true
+      - traefik.http.routers.nbs-web.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.http.routers.nbs-web.middlewares=nbs-headers
+      - traefik.http.services.nbs-web.loadbalancer.server.port=3000
+      - traefik.http.middlewares.nbs-headers.headers.stsSeconds=31536000
+      - traefik.http.middlewares.nbs-headers.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.nbs-headers.headers.frameDeny=true
+      - traefik.http.middlewares.nbs-headers.headers.referrerPolicy=same-origin
+
+volumes:
+  pgdata:
+  storage:
+
+networks:
+  internal:
+  proxy:
+    external: true
+    name: ${TRAEFIK_NETWORK}

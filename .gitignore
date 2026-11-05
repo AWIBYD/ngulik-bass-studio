@@ -1,0 +1,7 @@
+.env
+backend/.venv/
+**/__pycache__/
+frontend/node_modules/
+frontend/.next/
+frontend/*.tsbuildinfo
+e2e/last_run.json
