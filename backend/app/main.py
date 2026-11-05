@@ -6,19 +6,19 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from .config import get_settings
-from .db import init_db
-from .routers import auth, misc, projects
+from . import migrate
+from .routers import auth, misc, projects, stems
 from .security import CSRF_HEADER, limiter
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     get_settings().storage_dir.mkdir(parents=True, exist_ok=True)
-    init_db()
+    migrate.run()
     yield
 
 
-app = FastAPI(title="NGULIK BASS STUDIO API", version="0.1.0-phase1", lifespan=lifespan,
+app = FastAPI(title="NGULIK BASS STUDIO API", version="0.2.0-phase2", lifespan=lifespan,
               docs_url="/api/docs", openapi_url="/api/openapi.json")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -36,3 +36,4 @@ async def csrf_guard(request: Request, call_next):
 app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(misc.router)
+app.include_router(stems.router)

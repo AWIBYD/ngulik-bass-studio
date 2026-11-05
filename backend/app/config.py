@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     rate_limit_auth: str = Field("10/minute", alias="RATE_LIMIT_AUTH")
     rate_limit_upload: str = Field("20/hour", alias="RATE_LIMIT_UPLOAD")
 
+    redis_url: str = Field("redis://localhost:6379/0", alias="REDIS_URL")
+    separation_job_timeout: int = Field(4 * 3600, alias="SEPARATION_JOB_TIMEOUT")
+    rate_limit_separation: str = Field("10/hour", alias="RATE_LIMIT_SEPARATION")
+
     ffmpeg_bin: str = Field("ffmpeg", alias="FFMPEG_BIN")
     ffprobe_bin: str = Field("ffprobe", alias="FFPROBE_BIN")
 

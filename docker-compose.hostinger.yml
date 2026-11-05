@@ -22,11 +22,49 @@ services:
     networks: [internal]
     mem_limit: 512m
 
+  redis:
+    image: redis:7.4.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+    mem_limit: 192m
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET}
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_DIR: /data/storage
+      WORKER_THREADS: ${WORKER_THREADS:-2}
+      OMP_NUM_THREADS: ${WORKER_THREADS:-2}
+    volumes:
+      - storage:/data/storage
+      - models:/data/models
+    networks: [internal]
+    mem_limit: ${WORKER_MEM_LIMIT:-3g}
+    cpus: ${WORKER_CPUS:-1.5}
+
   backend:
     build: ./backend
     restart: unless-stopped
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     environment:
       APP_ENV: production
@@ -39,6 +77,7 @@ services:
       MAX_DURATION_SEC: ${MAX_DURATION_SEC:-900}
       RATE_LIMIT_AUTH: ${RATE_LIMIT_AUTH:-10/minute}
       RATE_LIMIT_UPLOAD: ${RATE_LIMIT_UPLOAD:-20/hour}
+      REDIS_URL: redis://redis:6379/0
     volumes:
       - storage:/data/storage
     networks: [internal, proxy]
@@ -82,6 +121,7 @@ services:
 volumes:
   pgdata:
   storage:
+  models:
 
 networks:
   internal:

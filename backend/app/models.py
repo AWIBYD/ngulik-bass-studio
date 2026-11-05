@@ -62,6 +62,7 @@ class Project(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
     audio_files: Mapped[list["AudioFile"]] = relationship(cascade="all, delete-orphan", passive_deletes=True)
+    stems: Mapped[list["AudioStem"]] = relationship(cascade="all, delete-orphan", passive_deletes=True)
     tab_track: Mapped["TabTrack | None"] = relationship(cascade="all, delete-orphan", passive_deletes=True, uselist=False)
 
 
@@ -84,15 +85,21 @@ class AudioFile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
-class AudioStem(Base):  # Phase 2
+class AudioStem(Base):
     __tablename__ = "audio_stems"
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uid)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     source_audio_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("audio_files.id", ondelete="SET NULL"))
-    stem_type: Mapped[str] = mapped_column(String(20))  # bass | drums | vocals | other
+    job_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("analysis_jobs.id", ondelete="SET NULL"))
+    # bass | drums | vocals | other | no_bass (drums+vocals+other backing track)
+    stem_type: Mapped[str] = mapped_column(String(20))
     origin: Mapped[str] = mapped_column(String(20), default="separated")  # separated | user_upload
     model_name: Mapped[str | None] = mapped_column(String(80))
-    storage_path: Mapped[str] = mapped_column(Text)
+    storage_path: Mapped[str] = mapped_column(Text)          # lossless download (FLAC)
+    playback_path: Mapped[str | None] = mapped_column(Text)  # AAC for the browser player
+    waveform_path: Mapped[str | None] = mapped_column(Text)
+    format: Mapped[str | None] = mapped_column(String(20))
+    size_bytes: Mapped[int | None] = mapped_column(Integer)
     duration_sec: Mapped[float | None] = mapped_column(Double)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
@@ -105,6 +112,8 @@ class AnalysisJob(Base):  # Phase 2/3
     status: Mapped[str] = mapped_column(String(20), default="queued")  # queued|processing|completed|failed
     progress: Mapped[float] = mapped_column(Double, default=0.0)
     model_name: Mapped[str | None] = mapped_column(String(80))
+    rq_job_id: Mapped[str | None] = mapped_column(String(64))
+    stage: Mapped[str | None] = mapped_column(String(120))  # human readable step
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

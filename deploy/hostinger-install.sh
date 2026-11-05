@@ -57,7 +57,17 @@ if [ "$RESOLVED" != "$PUBIP" ]; then
   echo "HTTPS baru aktif setelah A record domain diarahkan ke $PUBIP."
 fi
 
-say "Build & start (pertama kali ~5-10 menit)"
+C="docker compose -f docker-compose.hostinger.yml --env-file .env"
+if [ -n "$($C ps -q db 2>/dev/null)" ]; then
+  say "Backup database sebelum update"
+  mkdir -p backups
+  B="backups/db-$(date +%F-%H%M).sql.gz"
+  $C exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$B"
+  echo "Tersimpan: $B ($(du -h "$B" | cut -f1))"
+  ls -1t backups/db-*.sql.gz | tail -n +11 | xargs -r rm -f   # keep last 10
+fi
+
+say "Build & start (pertama kali ~10-20 menit, worker AI paling lama)"
 docker compose -f docker-compose.hostinger.yml --env-file .env up -d --build
 
 say "Menunggu backend sehat"
@@ -67,6 +77,14 @@ for i in $(seq 1 40); do
   fi
   sleep 3
   [ "$i" = 40 ] && die "Backend belum sehat. Lihat: docker compose -f docker-compose.hostinger.yml logs backend"
+done
+
+say "Menunggu worker AI online"
+for i in $(seq 1 40); do
+  N=$($C exec -T backend python -c "from app.jobqueue import workers_online;print(workers_online())" 2>/dev/null | tr -d '\r' || echo 0)
+  if [ "${N:-0}" -ge 1 ] 2>/dev/null; then echo "worker OK ($N)"; break; fi
+  sleep 3
+  [ "$i" = 40 ] && echo "PERINGATAN: worker belum online. Cek: $C logs --tail=50 worker"
 done
 
 say "Status container"

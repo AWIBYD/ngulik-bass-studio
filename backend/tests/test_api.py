@@ -144,3 +144,113 @@ def test_dashboard_and_settings(client):
     s = client.get("/api/settings").json()
     s["default_playback_rate"] = 0.75
     assert client.put("/api/settings", json=s).json()["default_playback_rate"] == 0.75
+
+
+# ---------- Phase 2: extraction API (no torch needed) ----------
+def _project_with_audio(client, media, name="bassline.wav"):
+    pid = client.post("/api/projects", json={"name": "Stem"}).json()["id"]
+    r = client.post(f"/api/projects/{pid}/audio", files={"file": (name, media[name].read_bytes(), "audio/wav")})
+    assert r.status_code == 201, r.text
+    return pid
+
+
+def test_separation_status_and_no_worker(client, media):
+    register(client)
+    st = client.get("/api/separation/status").json()
+    assert st["redis_online"] is True
+    assert {m["key"] for m in st["models"]} >= {"htdemucs", "htdemucs_ft_bass", "htdemucs_ft"}
+    pid = client.post("/api/projects", json={"name": "No audio"}).json()["id"]
+    assert client.post(f"/api/projects/{pid}/separate", json={"model": "htdemucs"}).status_code == 409
+    pid = _project_with_audio(client, media)
+    assert client.post(f"/api/projects/{pid}/separate", json={"model": "nope"}).status_code == 422
+    if st["workers_online"] == 0:  # honest refusal instead of a job that never runs
+        r = client.post(f"/api/projects/{pid}/separate", json={"model": "htdemucs"})
+        assert r.status_code == 503 and "Worker" in r.json()["detail"]
+
+
+def test_dead_job_is_reconciled(client, media):
+    register(client)
+    pid = _project_with_audio(client, media)
+    from app.db import get_db
+    from app.models import AnalysisJob
+    gen = get_db(); db = next(gen)
+    import uuid as _uuid
+    db.add(AnalysisJob(project_id=_uuid.UUID(pid), job_type="separation", status="processing",
+                       model_name="htdemucs", rq_job_id="does-not-exist"))
+    from app.models import Project
+    db.get(Project, _uuid.UUID(pid)).status = "processing"
+    db.commit(); gen.close()
+    jobs = client.get(f"/api/projects/{pid}/jobs").json()
+    assert jobs[0]["status"] == "failed" and "Worker berhenti" in jobs[0]["error"]
+    assert client.get(f"/api/projects/{pid}").json()["status"] == "failed"
+
+
+def test_user_bass_upload_fallback(client, media):
+    register(client)
+    pid = _project_with_audio(client, media)
+    r = client.post(f"/api/projects/{pid}/stems/bass-upload",
+                    files={"file": ("my-bass.flac", media["bassline.flac"].read_bytes(), "audio/flac")})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["warning"] is None and body["stem"]["origin"] == "user_upload"
+    stems = client.get(f"/api/projects/{pid}/stems").json()
+    assert [s["stem_type"] for s in stems] == ["bass"]
+    s = stems[0]
+    assert client.get(s["stream_url"], headers={"Range": "bytes=0-9"}).status_code == 206
+    dl = client.get(s["download_url"])
+    assert dl.status_code == 200 and "Bass" in dl.headers["content-disposition"]
+    # replacing keeps one bass stem; bad file rejected
+    assert client.post(f"/api/projects/{pid}/stems/bass-upload",
+                       files={"file": ("x.wav", media["corrupt.wav"].read_bytes(), "audio/wav")}).status_code == 422
+    assert client.delete(f"/api/projects/{pid}/stems/{s['id']}").status_code == 204
+    assert client.get(f"/api/projects/{pid}/stems").json() == []
+
+
+def test_stems_are_private(client, media):
+    register(client, "a@example.com")
+    pid = _project_with_audio(client, media)
+    sid = client.post(f"/api/projects/{pid}/stems/bass-upload",
+                      files={"file": ("b.wav", media["bassline.wav"].read_bytes(), "audio/wav")}).json()["stem"]["id"]
+    client.post("/api/auth/logout")
+    register(client, "b@example.com")
+    for path in ("stream", "download", "waveform"):
+        assert client.get(f"/api/projects/{pid}/stems/{sid}/{path}").status_code == 404
+    assert client.post(f"/api/projects/{pid}/separate", json={"model": "htdemucs"}).status_code == 404
+    assert client.get(f"/api/projects/{pid}/jobs").status_code == 404
+
+
+def test_migration_upgrades_existing_phase1_database(tmp_path):
+    """A DB created by Phase 1 (create_all, no alembic_version) is stamped then upgraded, keeping data."""
+    from alembic import command
+    from sqlalchemy import create_engine, inspect, text
+
+    from app.migrate import _config, run
+    url = "postgresql+psycopg://ngulik:ngulik@localhost:5432/ngulik_mig"
+    import os
+    os.environ["DATABASE_URL"] = url
+    from app import db as dbmod
+    from app.config import get_settings
+    get_settings.cache_clear()
+    old_engine = dbmod._engine
+    dbmod._engine = None
+    try:
+        eng = create_engine(url)
+        with eng.begin() as c:
+            c.execute(text("DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO ngulik;"))
+        cfg = _config()
+        command.upgrade(cfg, "0001")
+        with eng.begin() as c:
+            c.execute(text("DROP TABLE alembic_version"))
+            c.execute(text("INSERT INTO users (id,email,display_name,password_hash,created_at) "
+                           "VALUES ('00000000-0000-0000-0000-000000000001','old@example.com','Old','x',now())"))
+        run()
+        cols = {c["name"] for c in inspect(eng).get_columns("audio_stems")}
+        assert {"playback_path", "job_id"} <= cols
+        with eng.connect() as c:
+            assert c.execute(text("SELECT email FROM users")).scalar() == "old@example.com"
+            assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
+        eng.dispose()
+    finally:
+        dbmod._engine = old_engine
+        os.environ["DATABASE_URL"] = "postgresql+psycopg://ngulik:ngulik@localhost:5432/ngulik_test"
+        get_settings.cache_clear()

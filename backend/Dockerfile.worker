@@ -1,0 +1,22 @@
+# NGULIK BASS STUDIO — AI worker (Demucs bass separation). CPU only, no GPU required.
+FROM python:3.12.10-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/data/models TORCH_HOME=/data/models OMP_NUM_THREADS=2 WORKER_THREADS=2
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 app \
+    && mkdir -p /data/storage /data/models && chown -R app:app /data
+
+WORKDIR /app
+COPY requirements.txt requirements-worker.txt ./
+# CPU-only PyTorch (~200 MB instead of ~2.5 GB of CUDA libraries)
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0 \
+    && pip install -r requirements-worker.txt
+COPY app ./app
+COPY alembic.ini ./
+COPY migrations ./migrations
+
+USER app
+# One job at a time; each job runs in a forked work-horse so a crash/OOM never kills the worker.
+CMD ["sh", "-c", "exec rq worker -u \"$REDIS_URL\" separation"]

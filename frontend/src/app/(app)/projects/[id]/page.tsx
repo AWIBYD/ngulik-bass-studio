@@ -5,12 +5,13 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { fmtSize, fmtTime, StatusChip } from "@/components/AppShell";
 import { AudioDrop, type Picked } from "@/components/AudioDrop";
 import type { FrameFn } from "@/components/studio/frame";
+import { ExtractorPanel } from "@/components/studio/ExtractorPanel";
 import { Fretboard } from "@/components/studio/Fretboard";
 import { Inspector } from "@/components/studio/Inspector";
 import { TabView } from "@/components/studio/TabView";
 import { Waveform } from "@/components/studio/Waveform";
 import { TuningPicker } from "@/components/TuningPicker";
-import { api, ApiError, json, streamUrl, uploadAudio, type Note, type Project, type Tab, type UserSettings } from "@/lib/api";
+import { api, ApiError, json, streamUrl, uploadAudio, type Note, type Project, type Stem, type Tab, type UserSettings } from "@/lib/api";
 import { activeNoteIds } from "@/lib/clock";
 import { editorReducer, initialEditor, newId } from "@/lib/editor";
 import { gridStep, snapTime } from "@/lib/music";
@@ -36,6 +37,8 @@ export default function Studio() {
   const [picked, setPicked] = useState<Picked | null>(null);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const lastFret = useRef(0);
+  const [stems, setStems] = useState<Stem[]>([]);
+  const [source, setSource] = useState<string>("original"); // "original" or a stem id
 
   // ---------- load ----------
   const loadAll = useCallback(async () => {
@@ -44,25 +47,49 @@ export default function Studio() {
       setProject(p);
       setTab(t);
       dispatch({ type: "load", notes: t.notes });
-      if (p.audio) {
-        const w = await api<{ points: number[] }>(`/projects/${id}/audio/${p.audio.id}/waveform`);
-        setPeaks(w.points);
-      }
+      if (p.audio) setStems(await api<Stem[]>(`/projects/${id}/stems`));
     } catch (e) { setErr((e as Error).message); }
   }, [id]);
   useEffect(() => { loadAll(); }, [loadAll]);
   useEffect(() => { api<UserSettings>("/settings").then((s) => { setAutoScroll(s.auto_scroll); transport?.setRate(s.default_playback_rate); }).catch(() => {}); }, [transport]);
 
+  // ---------- audio source (original / bass / backing track ...) ----------
+  const sourceStem = stems.find((s) => s.id === source) ?? null;
+  useEffect(() => { if (source !== "original" && !sourceStem) setSource("original"); }, [source, sourceStem]);
+  const url = project ? (sourceStem ? sourceStem.stream_url : streamUrl(project)) : null;
+  const waveUrl = project?.audio ? (sourceStem ? sourceStem.waveform_url : `/api/projects/${id}/audio/${project.audio.id}/waveform`) : null;
+  useEffect(() => {
+    if (!waveUrl) return;
+    api<{ points: number[] }>(waveUrl.replace(/^\/api/, "")).then((w) => setPeaks(w.points)).catch(() => setPeaks(null));
+  }, [waveUrl]);
+
   // ---------- transport ----------
-  const url = project ? streamUrl(project) : null;
+  // When the source changes, the new player continues at the same song position, speed, loop and volume.
+  const carry = useRef<{ t: number; rate: number; vol: number; loop: Transport["loop"]; playing: boolean; offset: number } | null>(null);
+  const transportRef = useRef<Transport | null>(null);
   useEffect(() => {
     if (!url) return;
     const t = new Transport(url);
+    transportRef.current = t;
+    const c = carry.current;
+    if (c) {
+      t.setVolume(c.vol);
+      t.userOffsetMs = c.offset;
+      t.loop = { ...c.loop };
+      t.el.addEventListener("loadedmetadata", () => {
+        t.seek(c.t);
+        t.setRate(c.rate);
+        if (c.playing) t.play().catch(() => {});
+      }, { once: true });
+    }
     const unsub = t.subscribe(force);
     setTransport(t);
     // Diagnostics for automated sync tests only (opt-in per browser).
     try { if (localStorage.getItem("nbs-debug") === "1") (window as unknown as { __nbs: Transport }).__nbs = t; } catch { /* storage blocked */ }
-    return () => { unsub(); t.dispose(); setTransport(null); };
+    return () => {
+      carry.current = { t: t.time(), rate: t.rate, vol: t.getVolume(), loop: { ...t.loop }, playing: t.playing, offset: t.userOffsetMs };
+      unsub(); t.dispose(); setTransport(null);
+    };
   }, [url]);
 
   // ---------- frame loop: one clock, many views ----------
@@ -267,6 +294,18 @@ export default function Studio() {
         </div>
       )}
 
+      {project.audio && stems.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-ink-400">Dengarkan:</span>
+          {[{ id: "original", label: "Lagu asli" }, ...stems.map((s) => ({ id: s.id, label: s.stem_type === "no_bass" ? "Tanpa bass" : s.label }))].map((o) => (
+            <button key={o.id} onClick={() => setSource(o.id)}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold ${source === o.id ? "border-volt bg-volt text-ink-950" : "border-ink-600 text-ink-300"}`}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* view switch */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="inline-flex rounded-xl border border-ink-700 p-1">
@@ -295,6 +334,7 @@ export default function Studio() {
           {view !== "tab" && <Fretboard notes={ed.notes} tuning={tuning} subscribe={subscribe} />}
         </div>
         <div className="space-y-4">
+          <ExtractorPanel project={project} onStemsChanged={(s) => { setStems(s); api<Project>(`/projects/${id}`).then(setProject).catch(() => {}); }} />
           <Inspector note={selected} tuning={tuning} grid={grid} onChange={update}
             onDelete={() => selected && dispatch({ type: "remove", id: selected.id })} onSeek={(t) => { seek(t); tr?.play(); }} />
           <SongSettings project={project} locked={ed.dirty} onSaved={async (p) => { setProject(p); const t = await api<Tab>(`/projects/${id}/tab`); setTab(t); dispatch({ type: "load", notes: t.notes }); }} />

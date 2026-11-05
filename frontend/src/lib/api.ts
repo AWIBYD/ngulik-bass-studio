@@ -64,3 +64,35 @@ export function uploadAudio(projectId: string, file: File, onProgress: (pct: num
 }
 
 export const streamUrl = (p: Project) => (p.audio ? `/api/projects/${p.id}/audio/${p.audio.id}/stream` : null);
+
+// ---------- Phase 2: extraction ----------
+export type Stem = {
+  id: string; stem_type: "bass" | "drums" | "vocals" | "other" | "no_bass"; label: string; origin: "separated" | "user_upload";
+  model: string | null; format: string | null; size_bytes: number | null; duration_sec: number | null; created_at: string;
+  stream_url: string; download_url: string; waveform_url: string;
+};
+export type Job = {
+  id: string; type: string; status: "queued" | "processing" | "completed" | "failed"; progress: number; stage: string | null;
+  model: string | null; error: string | null; created_at: string; started_at: string | null; finished_at: string | null;
+};
+export type SepModel = { key: string; label: string; description: string; stems: string[]; relative_cost: number; measured_ratio: number | null };
+export type SepStatus = { redis_online: boolean; workers_online: number; queue_length: number; default_model: string; models: SepModel[] };
+
+export function uploadBassStem(projectId: string, file: File, onProgress: (pct: number) => void): Promise<{ stem: Stem; warning: string | null }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/projects/${projectId}/stems/bass-upload`);
+    xhr.setRequestHeader("x-nbs-request", "1");
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100));
+    xhr.onload = () => {
+      let body: unknown = null;
+      try { body = JSON.parse(xhr.responseText); } catch { /* */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as { stem: Stem; warning: string | null });
+      else reject(new ApiError(xhr.status, detail(body, `Upload gagal (HTTP ${xhr.status})`)));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "Koneksi terputus saat upload."));
+    const fd = new FormData();
+    fd.append("file", file);
+    xhr.send(fd);
+  });
+}

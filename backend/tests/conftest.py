@@ -11,6 +11,7 @@ os.environ.setdefault("RATE_LIMIT_AUTH", "1000/minute")
 os.environ.setdefault("RATE_LIMIT_UPLOAD", "1000/minute")
 os.environ.setdefault("MAX_UPLOAD_MB", "5")
 os.environ.setdefault("MAX_DURATION_SEC", "60")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
 
 
 @pytest.fixture(scope="session")
@@ -55,7 +56,9 @@ def client(tmp_path, monkeypatch):
     eng = dbmod.get_engine()
     from app import models  # noqa
     Base.metadata.drop_all(eng)
-    Base.metadata.create_all(eng)
+    with eng.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+    # schema is created by the real migrations when the app starts (lifespan)
     with TestClient(app, headers={"x-nbs-request": "1"}) as c:
         yield c
 

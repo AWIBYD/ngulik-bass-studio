@@ -118,6 +118,14 @@ def update_project(project_id: uuid.UUID, body: ProjectPatch, user: User = Depen
 @router.delete("/{project_id}", status_code=204)
 def delete_project(project_id: uuid.UUID, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     p = get_owned_project(project_id, user, db)
+    from .. import jobqueue
+    from ..models import AnalysisJob
+    for j in db.scalars(select(AnalysisJob).where(AnalysisJob.project_id == p.id,
+                                                  AnalysisJob.status.in_(["queued", "processing"]))):
+        try:
+            jobqueue.cancel(j.rq_job_id)
+        except Exception:
+            pass
     d = get_settings().storage_dir / str(p.owner_id) / str(p.id)
     db.delete(p)
     db.commit()

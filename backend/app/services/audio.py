@@ -91,9 +91,13 @@ def decode_check_and_waveform(path: Path, duration: float) -> list[float]:
     peak = int(np.abs(samples).max())
     if peak < 33:  # ~ -60 dBFS: effectively silent
         raise AudioValidationError("Audio hanya berisi hening.")
-    buckets = np.array_split(np.abs(samples.astype(np.float32)), WAVEFORM_POINTS)
-    env = np.array([b.max() if b.size else 0.0 for b in buckets]) / 32768.0
-    return [round(float(v), 4) for v in env]
+    return peaks(samples.astype(np.float32) / 32768.0)
+
+
+def peaks(mono: np.ndarray, points: int = WAVEFORM_POINTS) -> list[float]:
+    """Peak envelope of a mono float signal in [-1, 1]."""
+    buckets = np.array_split(np.abs(mono), points)
+    return [round(float(b.max()) if b.size else 0.0, 4) for b in buckets]
 
 
 def make_playback(src: Path, dst: Path) -> None:

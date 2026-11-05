@@ -40,7 +40,7 @@ export default function Dashboard() {
             <div className="card">
               <h2 className="mb-3 font-semibold">Audio yang sedang diproses</h2>
               {d.processing.map((j) => (
-                <div key={j.id} className="flex justify-between text-sm"><span>{j.type}</span><span>{Math.round(j.progress * 100)}%</span></div>
+                <div key={j.id} className="flex justify-between text-sm"><span>{j.type === "separation" ? "Ekstraksi bass" : j.type}</span><span>{Math.round(j.progress * 100)}%</span></div>
               ))}
             </div>
           )}

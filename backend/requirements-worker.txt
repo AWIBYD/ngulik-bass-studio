@@ -1,0 +1,12 @@
+# Worker image only (heavy). torch/torchaudio CPU wheels come from the PyTorch CPU index (see Dockerfile.worker).
+-r requirements.txt
+torch==2.6.0
+demucs==4.1.0
+huggingface-hub==0.30.2
+safetensors==0.5.3
+einops==0.8.1
+julius==0.2.7
+lameenc==1.8.1
+sphn==0.2.0
+PyYAML==6.0.2
+tqdm==4.67.1
