@@ -8,6 +8,7 @@ import type { FrameFn } from "@/components/studio/frame";
 import { ExtractorPanel } from "@/components/studio/ExtractorPanel";
 import { Fretboard } from "@/components/studio/Fretboard";
 import { Inspector } from "@/components/studio/Inspector";
+import { TabulatorPanel } from "@/components/studio/TabulatorPanel";
 import { TabView } from "@/components/studio/TabView";
 import { Waveform } from "@/components/studio/Waveform";
 import { TuningPicker } from "@/components/TuningPicker";
@@ -51,6 +52,13 @@ export default function Studio() {
     } catch (e) { setErr((e as Error).message); }
   }, [id]);
   useEffect(() => { loadAll(); }, [loadAll]);
+  const reloadTab = useCallback(async () => {
+    const [p, t] = await Promise.all([api<Project>(`/projects/${id}`), api<Tab>(`/projects/${id}/tab`)]);
+    setProject(p);
+    setTab(t);
+    dispatch({ type: "load", notes: t.notes });
+    setMsg(`Tab otomatis dimuat: ${t.notes.length} nada.`);
+  }, [id]);
   useEffect(() => { api<UserSettings>("/settings").then((s) => { setAutoScroll(s.auto_scroll); transport?.setRate(s.default_playback_rate); }).catch(() => {}); }, [transport]);
 
   // ---------- audio source (original / bass / backing track ...) ----------
@@ -193,6 +201,18 @@ export default function Studio() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selected, transport, save, update, grid, tuning.length]);
 
+  // ---------- review AI notes ----------
+  const reviewCount = ed.notes.filter((n) => n.needs_review).length;
+  const nextReview = () => {
+    const from = selected ? selected.start_time + 1e-4 : transport ? transport.time() : 0;
+    const flagged = ed.notes.filter((n) => n.needs_review);
+    const next = flagged.find((n) => n.start_time > from) ?? flagged[0];
+    if (!next) return;
+    transport?.pause();
+    transport?.seek(Math.max(0, next.start_time - 0.5));
+    dispatch({ type: "select", id: next.id });
+  };
+
   // ---------- transport helpers ----------
   const seek = useCallback((t: number) => transport?.seek(t), [transport]);
   const barAt = (t: number) => measures.findLast?.((m) => m.start_time <= t + 1e-6) ?? measures.filter((m) => m.start_time <= t + 1e-6).pop();
@@ -322,6 +342,11 @@ export default function Studio() {
           </>
         )}
         <span className="text-xs text-ink-400">{ed.notes.length} nada</span>
+        {reviewCount > 0 && (
+          <button className="rounded-full border border-warn/60 px-3 py-1 text-xs font-semibold text-warn" onClick={nextReview}>
+            ⚠ {reviewCount} perlu dicek · berikutnya →
+          </button>
+        )}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
@@ -334,6 +359,7 @@ export default function Studio() {
           {view !== "tab" && <Fretboard notes={ed.notes} tuning={tuning} subscribe={subscribe} />}
         </div>
         <div className="space-y-4">
+          <TabulatorPanel project={project} stems={stems} dirty={ed.dirty} hasNotes={ed.notes.length > 0} onDone={reloadTab} />
           <ExtractorPanel project={project} onStemsChanged={(s) => { setStems(s); api<Project>(`/projects/${id}`).then(setProject).catch(() => {}); }} />
           <Inspector note={selected} tuning={tuning} grid={grid} onChange={update}
             onDelete={() => selected && dispatch({ type: "remove", id: selected.id })} onSeek={(t) => { seek(t); tr?.play(); }} />

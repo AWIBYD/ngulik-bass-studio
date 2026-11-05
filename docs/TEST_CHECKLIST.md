@@ -55,3 +55,15 @@ Gunakan audio milik sendiri / yang kamu punya hak pakainya. Uji di **Chrome Andr
 - [ ] Tekan **Batalkan** saat proses → status "Dibatalkan", bisa ekstrak ulang.
 - [ ] Saat ekstraksi berjalan, n8n tetap bisa diakses dan workflow jalan.
 - [ ] Upload bass stem sendiri (fallback) → muncul sebagai "upload sendiri" dan bisa diputar sinkron.
+
+---
+
+# Checklist uji manual — Phase 3 (di VPS, lagu asli)
+- [ ] Ekstrak bass → "Buat tab otomatis" (pYIN). Catat waktu: ______ untuk lagu ______ menit.
+- [ ] Putar dengan player: berapa % nada yang benar menurut telinga kamu? ______ %
+- [ ] Nada kuning memang yang meragukan? Tekan "perlu dicek · berikutnya" untuk menelusuri.
+- [ ] Posisi senar/fret terasa wajar dimainkan (tidak loncat-loncat)?
+- [ ] BPM hasil deteksi cocok (bar line pas dengan ketukan)?
+- [ ] Ulangi dengan CREPE pada bagian yang banyak salah — lebih baik?
+- [ ] Tulis beberapa nada manual → "Pertahankan nada manual" → nada manual tetap ada.
+- [ ] Edit nada AI → garis kuning hilang → Simpan → reload, tetap.

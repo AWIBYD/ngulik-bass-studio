@@ -10,3 +10,12 @@ lameenc==1.8.1
 sphn==0.2.0
 PyYAML==6.0.2
 tqdm==4.67.1
+# Phase 3 transcription
+librosa==0.11.0
+numba==0.61.2
+scipy==1.15.3
+scikit-learn==1.6.1
+soxr==0.5.0.post1
+torchcrepe==0.0.24
+torchaudio==2.6.0
+resampy==0.4.3

@@ -4,7 +4,7 @@
 
 Studio web untuk pemain bass: upload lagu → (Phase 2) ekstrak bass → (Phase 3) transkripsi otomatis → edit tab → putar lagu dengan tab, playhead & fretboard yang sinkron → latihan → (Phase 5) export.
 
-> Status: **PHASE 1 & 2 selesai** (lihat `docs/PHASE1_REPORT.md`, `docs/PHASE2_REPORT.md`). AI tabulator (Phase 3) dan export (Phase 5) **belum** aktif.
+> Status: **PHASE 1–3 selesai** (lihat `docs/PHASE1_REPORT.md` … `docs/PHASE3_REPORT.md`). Practice mode lanjutan (Phase 4) dan export (Phase 5) belum.
 
 ## Fitur Phase 1
 - Akun (register/login), password Argon2, sesi cookie httpOnly, proteksi CSRF, rate limiting.
@@ -20,6 +20,10 @@ Studio web untuk pemain bass: upload lagu → (Phase 2) ekstrak bass → (Phase 
 - 3 model: HTDemucs, HTDemucs-FT Bass, HTDemucs-FT. Output bass/drums/vocals/other + backing track tanpa bass (FLAC + AAC).
 - Player bisa ganti sumber (asli/bass/tanpa bass/…) tanpa kehilangan posisi & sinkron.
 - Fallback upload bass stem sendiri. Migrasi DB Alembic + backup otomatis saat update.
+
+## Fitur Phase 3
+- Tab otomatis dari bass stem: pYIN/CREPE, onset, BPM, koreksi oktaf, confidence per nada, nada ragu ditandai kuning + tombol "perlu dicek".
+- Senar/fret dipilih otomatis dengan perpindahan tangan minimal (semua tuning). Mode gabung mempertahankan nada manual.
 
 ## Struktur
 ```

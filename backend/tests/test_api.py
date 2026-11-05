@@ -248,9 +248,18 @@ def test_migration_upgrades_existing_phase1_database(tmp_path):
         assert {"playback_path", "job_id"} <= cols
         with eng.connect() as c:
             assert c.execute(text("SELECT email FROM users")).scalar() == "old@example.com"
-            assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
+            assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0003"
         eng.dispose()
     finally:
         dbmod._engine = old_engine
         os.environ["DATABASE_URL"] = "postgresql+psycopg://ngulik:ngulik@localhost:5432/ngulik_test"
         get_settings.cache_clear()
+
+
+def test_transcribe_preconditions(client, media):
+    register(client)
+    pid = client.post("/api/projects", json={"name": "T"}).json()["id"]
+    assert client.post(f"/api/projects/{pid}/transcribe", json={}).status_code == 409  # no audio
+    pid = _project_with_audio(client, media)
+    assert client.post(f"/api/projects/{pid}/transcribe", json={"source": "bass_stem"}).status_code == 409
+    assert client.post(f"/api/projects/{pid}/transcribe", json={"method": "magic"}).status_code == 422

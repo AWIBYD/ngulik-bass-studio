@@ -88,7 +88,7 @@ export function StatusChip({ status }: { status: string }) {
     draft: "bg-ink-700 text-ink-300", ready: "bg-volt/15 text-volt", queued: "bg-warn/15 text-warn",
     processing: "bg-warn/15 text-warn", completed: "bg-volt/15 text-volt", failed: "bg-bad/15 text-bad",
   };
-  const label: Record<string, string> = { draft: "Belum ada audio", ready: "Siap", queued: "Antre ekstraksi", processing: "Mengekstrak", completed: "Stem siap", failed: "Ekstraksi gagal" };
+  const label: Record<string, string> = { draft: "Belum ada audio", ready: "Siap", queued: "Antre AI", processing: "Diproses AI", completed: "AI selesai", failed: "Proses AI gagal" };
   return <span className={`chip ${map[status] ?? "bg-ink-700"}`}>{label[status] ?? status}</span>;
 }
 

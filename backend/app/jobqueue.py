@@ -29,6 +29,12 @@ def enqueue_separation(job_id: str) -> str:
     return rq_job.id
 
 
+def enqueue_transcription(job_id: str) -> str:
+    rq_job = queue().enqueue("app.tasks.transcription.run_transcription", job_id,
+                             job_timeout=2 * 3600, result_ttl=3600, failure_ttl=7 * 86400)
+    return rq_job.id
+
+
 def workers_online() -> int:
     try:
         return len([w for w in Worker.all(connection=redis_conn()) if QUEUE_NAME in w.queue_names()])

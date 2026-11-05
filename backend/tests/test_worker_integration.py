@@ -107,3 +107,47 @@ def test_cancel_queued_job(client, media):
     r = client.post(f"/api/projects/{pid}/jobs/{jid}/cancel")
     assert r.status_code == 200 and r.json()["status"] == "failed"
     assert jobqueue.rq_status(r.json() and j.rq_job_id) == "canceled"
+
+
+def test_real_worker_transcribes_bass_to_tab(client, media, worker, tmp_path):
+    """Synthetic plucked bass line with a known answer key -> AI tab via the real worker."""
+    from .synth import groove, render
+    truth = groove(100)
+    wav = tmp_path / "groove.wav"
+    render(truth, truth[-1][0] + 1.5, wav, noise=0.01, detune_cents=12, bleed=0.15)
+    register(client)
+    pid = client.post("/api/projects", json={"name": "AI tab", "bpm": 120}).json()["id"]
+    assert client.post(f"/api/projects/{pid}/audio", files={"file": ("g.wav", wav.read_bytes(), "audio/wav")}).status_code == 201
+    assert client.post(f"/api/projects/{pid}/stems/bass-upload",
+                       files={"file": ("bass.wav", wav.read_bytes(), "audio/wav")}).status_code == 201
+    # one manual note that must survive "merge"
+    tab = client.get(f"/api/projects/{pid}/tab").json()
+    client.put(f"/api/projects/{pid}/tab", json={"version": tab["version"], "notes": [
+        {"string_number": 4, "fret_number": 0, "start_time": 0.5, "duration": 0.25}]})
+
+    r = client.post(f"/api/projects/{pid}/transcribe", json={"source": "bass_stem", "method": "pyin",
+                                                              "mode": "merge", "apply_bpm": True})
+    assert r.status_code == 202, r.text
+    job, _ = _wait(client, pid, timeout=300)
+    assert job["status"] == "completed", job
+    res = job["result"]
+    assert res["kept_manual"] == 1 and res["bpm_applied"] and 95 <= res["bpm"] <= 105, res
+
+    tab = client.get(f"/api/projects/{pid}/tab").json()
+    ai = [n for n in tab["notes"] if n["source"] == "ai"]
+    manual = [n for n in tab["notes"] if n["source"] == "manual"]
+    assert len(manual) == 1
+    # accuracy vs answer key (pitch exact, onset within 50 ms); the manual note covers truth[0]
+    hit = sum(any(abs(n["start_time"] - s) <= 0.05 and n["pitch_midi"] == m for n in tab["notes"]) for s, _, m in truth)
+    assert hit / len(truth) >= 0.9, f"only {hit}/{len(truth)} notes correct"
+    for n in ai:  # every AI note is playable on this tuning and carries a confidence
+        assert 1 <= n["string_number"] <= 4 and 0 <= n["fret_number"] <= 24
+        assert 0 <= n["confidence_score"] <= 1
+    proj = client.get(f"/api/projects/{pid}").json()
+    assert 95 <= proj["bpm"] <= 105 and tab["measures"][0]["bpm"] == proj["bpm"]
+
+    # replace mode drops the manual note
+    r = client.post(f"/api/projects/{pid}/transcribe", json={"source": "auto", "mode": "replace", "apply_bpm": False})
+    job, _ = _wait(client, pid, timeout=300)
+    assert job["status"] == "completed" and job["result"]["kept_manual"] == 0
+    assert all(n["source"] == "ai" for n in client.get(f"/api/projects/{pid}/tab").json()["notes"])

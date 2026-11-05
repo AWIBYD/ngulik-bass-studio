@@ -7,6 +7,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
+from typing import Literal
+
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,9 +31,16 @@ class SeparateIn(BaseModel):
     model: str = DEFAULT_MODEL
 
 
+class TranscribeIn(BaseModel):
+    source: Literal["auto", "bass_stem", "original"] = "auto"
+    method: Literal["pyin", "crepe"] = "pyin"
+    mode: Literal["replace", "merge"] = "replace"
+    apply_bpm: bool = True
+
+
 def _job_out(j: AnalysisJob) -> dict:
     return {"id": str(j.id), "type": j.job_type, "status": j.status, "progress": j.progress, "stage": j.stage,
-            "model": j.model_name, "error": j.error, "created_at": j.created_at, "started_at": j.started_at,
+            "model": j.model_name, "error": j.error, "params": j.params, "result": j.result, "created_at": j.created_at, "started_at": j.started_at,
             "finished_at": j.finished_at}
 
 
@@ -70,7 +79,8 @@ def _speed_estimates(db: Session) -> dict[str, float]:
         rows = db.execute(
             select(AnalysisJob.started_at, AnalysisJob.finished_at, Project.id)
             .join(Project, Project.id == AnalysisJob.project_id)
-            .where(AnalysisJob.model_name == key, AnalysisJob.status == "completed", AnalysisJob.started_at.is_not(None))
+            .where(AnalysisJob.model_name == key, AnalysisJob.job_type == "separation",
+                   AnalysisJob.status == "completed", AnalysisJob.started_at.is_not(None))
             .order_by(AnalysisJob.finished_at.desc()).limit(10)
         ).all()
         ratios = []
@@ -277,3 +287,40 @@ async def upload_bass_stem(request: Request, project_id: uuid.UUID, file: Upload
     db.add(st)
     db.commit()
     return {"stem": _stem_out(p, st), "warning": warning}
+
+
+@router.post("/projects/{project_id}/transcribe", status_code=202)
+@limiter.limit(lambda: get_settings().rate_limit_separation)
+def start_transcription(request: Request, project_id: uuid.UUID, body: TranscribeIn,
+                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    p = get_owned_project(project_id, user, db)
+    has_bass = any(s.stem_type == "bass" for s in p.stems)
+    has_audio = any(a.kind == "original" for a in p.audio_files)
+    if body.source == "bass_stem" and not has_bass:
+        raise HTTPException(409, "Belum ada bass stem. Jalankan Bass Extractor atau upload bass stem dulu.")
+    if not (has_audio or has_bass):
+        raise HTTPException(409, "Upload lagu dulu.")
+    active = db.scalars(select(AnalysisJob).where(AnalysisJob.project_id == p.id, AnalysisJob.status.in_(ACTIVE))).all()
+    reconcile(db, list(active))
+    if any(j.status in ACTIVE for j in active):
+        raise HTTPException(409, "Masih ada proses AI yang berjalan untuk proyek ini. Tunggu sampai selesai.")
+    try:
+        jobqueue.redis_conn().ping()
+    except Exception:
+        raise HTTPException(503, "Antrean pemrosesan (Redis) tidak aktif.")
+    if jobqueue.workers_online() == 0:
+        raise HTTPException(503, "Worker AI sedang tidak aktif. Cek container worker di VPS.")
+    job = AnalysisJob(project_id=p.id, job_type="transcription", status="queued", model_name=body.method,
+                      params=body.model_dump(), stage="Menunggu antrean")
+    db.add(job)
+    p.status = "queued"
+    db.commit()
+    try:
+        job.rq_job_id = jobqueue.enqueue_transcription(str(job.id))
+    except Exception as e:
+        job.status, job.error = "failed", f"Gagal masuk antrean: {e}"
+        p.status = "failed"
+        db.commit()
+        raise HTTPException(503, job.error)
+    db.commit()
+    return _job_out(job)

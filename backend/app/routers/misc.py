@@ -27,8 +27,8 @@ def capabilities():
     """Honest feature status so the UI never shows a fake button."""
     return {
         "upload": True, "manual_tab_editor": True, "sync_player": True,
-        "bass_extraction": True, "ai_transcription": False, "export": False,
-        "notes": "AI tabulator = Phase 3, export = Phase 5.",
+        "bass_extraction": True, "ai_transcription": True, "export": False,
+        "notes": "Export = Phase 5.",
     }
 
 
